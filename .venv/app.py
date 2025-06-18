@@ -5,9 +5,9 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # Tu token de Telegram y API Key de Groq
-TELEGRAM_BOT_TOKEN = "TU_TOKEN_TELEGRAM"
-GROQ_API_KEY = "TU_API_KEY_GROQ"
-GROQ_MODEL = "llama3-70b-8192"  # o mixtral-8x7b-32768
+TELEGRAM_BOT_TOKEN = "7857884148:AAH88TAfYOCKjk5ySqhOd0rOccA24_jpQRM"
+GROQ_API_KEY = "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"
+GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  
 
 # Diccionario para almacenar CSV por usuario
 user_csvs = {}
