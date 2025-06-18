@@ -59,7 +59,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     df = user_csvs[user_id]
-    csv_preview = df.head().to_csv(index=False)
+    csv_preview = df.head(30).to_csv(index=False)
 
     prompt = f"""
 Tengo el siguiente archivo CSV:
