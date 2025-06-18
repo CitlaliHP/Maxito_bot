@@ -1,2 +1,2 @@
-# Maxito_boot
-Boot de Telegram 
+# Maxito_bot
+Bot de Telegram 
