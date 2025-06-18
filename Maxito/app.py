@@ -1,80 +1,83 @@
 import os
 import pandas as pd
-import requests
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder,CommandHandler,MessageHandler,ContextTypes, filters
 
-# Tu token de Telegram y API Key de Groq
+from groq import Groq
+
+# 🔐 Claves 
 TELEGRAM_BOT_TOKEN = "7857884148:AAH88TAfYOCKjk5ySqhOd0rOccA24_jpQRM"
 GROQ_API_KEY = "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"
-GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  
 
-# Diccionario para almacenar CSV por usuario
+# Inicializa el cliente Groq
+groq_client = Groq(api_key=GROQ_API_KEY)
+
+# Memoria para almacenar CSV por usuario
 user_csvs = {}
 
-# Función para enviar prompt al modelo de Groq
-def ask_groq(prompt: str) -> str:
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": [
-            {"role": "system", "content": "Responde preguntas basadas en datos CSV de manera precisa."},
+# Función para preguntar al modelo Groq
+def ask_groq_llama4(prompt: str) -> str:
+    response = groq_client.chat.completions.create(
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        messages=[
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.3
-    }
+        temperature=0.7,
+        max_completion_tokens=1024,
+        top_p=1,
+        stream=False
+    )
+    return response.choices[0].message.content
 
-    response = requests.post(url, headers=headers, json=payload)
-    return response.json()['choices'][0]['message']['content']
-
-# Comando /start
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hola, envíame un archivo CSV para comenzar.")
+    await update.message.reply_text("Hola 👋\nEnvíame un archivo CSV para comenzar.")
 
-# Manejar CSV
+# Manejador de archivos CSV
 async def handle_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = update.message.document
-    if file.mime_type == 'text/csv':
-        file_path = f"/tmp/{file.file_name}"
-        file_obj = await file.get_file()
-        await file_obj.download_to_drive(file_path)
+    if file.mime_type != 'text/csv':
+        await update.message.reply_text("❌ Solo acepto archivos CSV.")
+        return
 
+    file_path = f"/tmp/{file.file_name}"
+    file_obj = await file.get_file()
+    await file_obj.download_to_drive(file_path)
+
+    try:
         df = pd.read_csv(file_path)
         user_csvs[update.effective_user.id] = df
-        await update.message.reply_text("CSV cargado. Ahora puedes hacer preguntas.")
-    else:
-        await update.message.reply_text("Por favor, envía un archivo en formato CSV.")
+        await update.message.reply_text("✅ CSV recibido. Ahora hazme una pregunta sobre los datos.")
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Error al leer el CSV: {e}")
 
-# Manejar preguntas del usuario
+# Manejador de texto (preguntas)
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_csvs:
-        await update.message.reply_text("Primero envía un archivo CSV.")
+        await update.message.reply_text("📄 Primero debes enviarme un archivo CSV.")
         return
 
     df = user_csvs[user_id]
-    csv_text = df.head(30).to_csv(index=False)  # Limita para evitar tokens excesivos
+    csv_preview = df.head(30).to_csv(index=False)
 
-    prompt = f"""Este es el contenido de un archivo CSV:
+    prompt = f"""
+Tengo el siguiente archivo CSV (las primeras 30 filas):
 
-{csv_text}
+{csv_preview}
 
-Con base en este CSV, responde la siguiente pregunta del usuario:
+Ahora responde esta pregunta del usuario de forma clara y basada en los datos:
+
 {update.message.text}
 """
 
     try:
-        answer = ask_groq(prompt)
+        answer = ask_groq_llama4(prompt)
         await update.message.reply_text(answer)
     except Exception as e:
-        await update.message.reply_text("Ocurrió un error al consultar Groq.")
+        await update.message.reply_text(f"❌ Error al consultar Groq: {e}")
 
-# Iniciar la aplicación
+# Iniciar el bot
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
