@@ -1,9 +1,9 @@
 import os
 import pandas as pd
-from telegram import Update
-from telegram.ext import ApplicationBuilder,CommandHandler,MessageHandler,ContextTypes, filters
+from telegram import Update # type: ignore
+from telegram.ext import ApplicationBuilder,CommandHandler,MessageHandler,ContextTypes, filters # type: ignore
 
-from groq import Groq
+from groq import Groq # type: ignore
 
 # 🔐 Claves 
 TELEGRAM_BOT_TOKEN = "7857884148:AAH88TAfYOCKjk5ySqhOd0rOccA24_jpQRM"
@@ -59,10 +59,10 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     df = user_csvs[user_id]
-    csv_preview = df.head(30).to_csv(index=False)
+    csv_preview = df.head().to_csv(index=False)
 
     prompt = f"""
-Tengo el siguiente archivo CSV (las primeras 30 filas):
+Tengo el siguiente archivo CSV:
 
 {csv_preview}
 
