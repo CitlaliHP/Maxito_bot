@@ -51,6 +51,33 @@ async def handle_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error al leer el CSV: {e}")
 
+# resumir el csv
+def resumir_csv(df: pd.DataFrame) -> str:
+    resumen = f"📊 El archivo tiene {len(df)} filas y {len(df.columns)} columnas.\n\n"
+    resumen += "🧱 Estructura de columnas:\n"
+
+    for col in df.columns:
+        tipo = df[col].dtype
+        resumen += f"🔹 {col} ({tipo})"
+
+        # Añadir valores únicos si hay pocos
+        if df[col].nunique() <= 5:
+            resumen += f" | Únicos: {df[col].dropna().unique().tolist()}"
+        # Añadir estadísticas si es numérica
+        elif pd.api.types.is_numeric_dtype(df[col]):
+            resumen += (f" | Media: {df[col].mean():.2f}, "
+                        f"Máx: {df[col].max()}, "
+                        f"Mín: {df[col].min()}")
+        resumen += "\n"
+
+    # Mostrar algunas filas al azar como ejemplo
+    resumen += "\n📌 Ejemplo de registros:\n"
+    ejemplo = df.sample(min(len(df), 5), random_state=42)
+    resumen += ejemplo.to_string(index=False)
+
+    return resumen
+
+
 # Manejador de texto (preguntas)
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -59,14 +86,19 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     df = user_csvs[user_id]
-    csv_preview = df.head(30).to_csv(index=False)
+    # csv_preview = df.head(10).to_csv(index=False)
+    csv_preview = resumir_csv(df)
+    print(csv_preview)
+
+
 
     prompt = f"""
-Tengo el siguiente archivo CSV:
+Basandote en este archivo CSV:
 
 {csv_preview}
 
-Ahora responde esta pregunta del usuario de forma clara y basada en los datos:
+Responde a las preguntas del usuario tomando en cuenta que no tiene conocimientos técnicos en programación, si no 
+que solo quiere saber los datos concretos del csv en question:
 
 {update.message.text}
 """
