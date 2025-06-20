@@ -1,6 +1,8 @@
 import os
+import io
 import pandas as pd
-from telegram import Update
+import matplotlib.pyplot as plt
+from telegram import Update, InputFile
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from groq import Groq
 from dotenv import load_dotenv
@@ -37,16 +39,18 @@ def resumir_columnas(df: pd.DataFrame) -> str:
         resumen += f"- {col} ({tipo})\n"
     return resumen
 
+# 🧹 Limpiar código
 def limpiar_codigo(codigo: str) -> str:
-    # Elimina bloques de markdown
-    if "```" in codigo:
-        codigo = codigo.strip("`").strip()
-        if "python" in codigo:
-            codigo = codigo.replace("python", "", 1).strip()
-    # Si hay varias líneas, toma solo la primera válida
+    codigo = codigo.strip("`").strip()
+    if "```python" in codigo:
+        codigo = codigo.replace("python", "", 1).strip()
     lineas = [line.strip() for line in codigo.splitlines() if line.strip()]
     return lineas[0] if lineas else ""
 
+# 🎯 Detectar si es una gráfica
+def quiere_grafica(pregunta: str) -> bool:
+    keywords = ["gráfico", "grafica", "gráfica", "histograma", "barras", "dispersión", "pie", "plot"]
+    return any(k in pregunta.lower() for k in keywords)
 
 # 🚀 /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -80,45 +84,80 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     df = user_csvs[user_id]
     columnas = resumir_columnas(df)
     pregunta = update.message.text.strip()
+    es_grafica = quiere_grafica(pregunta)
 
-    prompt = f"""
-Tengo un DataFrame llamado `df`. Su estructura es la siguiente:
-{columnas}
+    # Prompt ajustado según el tipo
+    if es_grafica:
+        prompt = f"""
+            Tengo un DataFrame llamado `df`. Su estructura es la siguiente:
+            {columnas}
 
-Responde solo con una línea de código `pandas` que conteste esta pregunta:
+            Genera una sola línea de código Python que use pandas o matplotlib para crear un gráfico, siguiendo exactamente la instrucción del usuario:
 
-\"{pregunta}\"
+            \"{pregunta}\"
 
-Por ejemplo:
-df[df["edad"] > 30]
+            ⚠️ Instrucciones importantes:
+            - Usa solo columnas relevantes a la pregunta.
+            - Si el usuario dice "gráfica de barras", asegúrate de que el código use `kind='bar'`.
+            - Si dice "histograma", usa `.hist()` o `kind='hist'`.
+            - Si pide "gráfico de pastel", usa `kind='pie'`.
+            - El resultado debe ser una sola línea de código sin `print`, sin texto, sin markdown.
+            - El gráfico debe mostrarse directamente al ejecutarse, pero no lo guardes ni lo muestres explícitamente.
+            - Usa `df` como nombre del DataFrame.
 
-No des explicaciones. 
-Devuelve una sola línea de código Python que retorne un resultado directamente.
-No uses `print()`. No incluyas ningún texto. Solo la expresión que retorne el resultado.
-"""
+            Ejemplo de salida válida:
+            df["edad"].value_counts().plot(kind="bar")
+
+            Solo responde con la línea de código. Nada más.
+            """
+
+    else:
+        prompt = f"""
+            Tengo un DataFrame llamado `df`. Su estructura es la siguiente:
+            {columnas}
+
+            Responde solo con una línea de código `pandas` que conteste esta pregunta:
+
+            \"{pregunta}\"
+
+            Por ejemplo:
+            df[df["edad"] > 30]
+
+            No des explicaciones. 
+            Devuelve una sola línea de código Python que retorne un resultado directamente.
+            No uses `print()`. No incluyas ningún texto. Solo la expresión que retorne el resultado.
+            """
 
     try:
         codigo = traducir_a_pandas(prompt)
         codigo = limpiar_codigo(codigo)
 
-        print(codigo)
+        print("Código generado:", codigo)
+
         # Validación básica
         if "df" not in codigo or ";" in codigo:
             raise ValueError("❌ Código inseguro o inválido generado.")
 
-        # Ejecutar el código con el contexto seguro
-        resultado = eval(codigo, {"df": df, "pd": pd})
-
-        # Formatear la respuesta
-        if isinstance(resultado, pd.DataFrame):
-            if resultado.empty:
-                mensaje = "📭 No se encontraron resultados."
-            else:
-                mensaje = resultado.head(10).to_string(index=False)
+        # Gráfico
+        if es_grafica:
+            plt.figure()
+            eval(codigo, {"df": df, "pd": pd, "plt": plt})
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format="png")
+            buffer.seek(0)
+            plt.close()
+            await update.message.reply_photo(photo=InputFile(buffer, filename="grafica.png"))
         else:
-            mensaje = f"🧠 Resultado: {str(resultado)}"
-
-        await update.message.reply_text(mensaje)
+            # Resultado en texto o tabla
+            resultado = eval(codigo, {"df": df, "pd": pd})
+            if isinstance(resultado, pd.DataFrame):
+                if resultado.empty:
+                    mensaje = "📭 No se encontraron resultados."
+                else:
+                    mensaje = resultado.head(10).to_string(index=False)
+            else:
+                mensaje = f"🧠 {str(resultado)}"
+            await update.message.reply_text(mensaje)
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Ocurrió un error al procesar tu solicitud:\n{e}")
