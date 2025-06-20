@@ -3,10 +3,13 @@ import pandas as pd
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 from groq import Groq
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # 🔐 Claves
-TELEGRAM_BOT_TOKEN = "7857884148:AAH88TAfYOCKjk5ySqhOd0rOccA24_jpQRM"
-GROQ_API_KEY = "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"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Cliente Groq
 groq_client = Groq(api_key=GROQ_API_KEY)
@@ -89,7 +92,9 @@ Responde solo con una línea de código `pandas` que conteste esta pregunta:
 Por ejemplo:
 df[df["edad"] > 30]
 
-No des explicaciones. Solo el código..
+No des explicaciones. 
+Devuelve una sola línea de código Python que retorne un resultado directamente.
+No uses `print()`. No incluyas ningún texto. Solo la expresión que retorne el resultado.
 """
 
     try:
