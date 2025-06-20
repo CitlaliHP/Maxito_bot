@@ -1,39 +1,55 @@
 import os
 import pandas as pd
-from telegram import Update # type: ignore
-from telegram.ext import ApplicationBuilder,CommandHandler,MessageHandler,ContextTypes, filters # type: ignore
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from groq import Groq
 
-from groq import Groq # type: ignore
-
-# 🔐 Claves 
+# 🔐 Claves
 TELEGRAM_BOT_TOKEN = "7857884148:AAH88TAfYOCKjk5ySqhOd0rOccA24_jpQRM"
 GROQ_API_KEY = "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"
 
-# Inicializa el cliente Groq
+# Cliente Groq
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# Memoria para almacenar CSV por usuario
+# Memoria por usuario
 user_csvs = {}
 
-# Función para preguntar al modelo Groq
-def ask_groq_llama4(prompt: str) -> str:
+# 🧠 Preguntar a Groq para obtener código pandas
+def traducir_a_pandas(prompt: str) -> str:
     response = groq_client.chat.completions.create(
         model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.7,
-        max_completion_tokens=1024,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        max_completion_tokens=256,
         top_p=1,
         stream=False
     )
-    return response.choices[0].message.content
+    return response.choices[0].message.content.strip()
 
-# /start command
+# 📊 Resumen de estructura para dar contexto a la IA
+def resumir_columnas(df: pd.DataFrame) -> str:
+    resumen = "Estructura del DataFrame:\n"
+    for col in df.columns:
+        tipo = df[col].dtype
+        resumen += f"- {col} ({tipo})\n"
+    return resumen
+
+def limpiar_codigo(codigo: str) -> str:
+    # Elimina bloques de markdown
+    if "```" in codigo:
+        codigo = codigo.strip("`").strip()
+        if "python" in codigo:
+            codigo = codigo.replace("python", "", 1).strip()
+    # Si hay varias líneas, toma solo la primera válida
+    lineas = [line.strip() for line in codigo.splitlines() if line.strip()]
+    return lineas[0] if lineas else ""
+
+
+# 🚀 /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Hola 👋\nEnvíame un archivo CSV para comenzar.")
+    await update.message.reply_text("Hola 👋 Envíame un archivo CSV para comenzar.")
 
-# Manejador de archivos CSV
+# 📎 Recibir archivo CSV
 async def handle_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = update.message.document
     if file.mime_type != 'text/csv':
@@ -51,34 +67,7 @@ async def handle_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error al leer el CSV: {e}")
 
-# resumir el csv
-def resumir_csv(df: pd.DataFrame) -> str:
-    resumen = f"📊 El archivo tiene {len(df)} filas y {len(df.columns)} columnas.\n\n"
-    resumen += "🧱 Estructura de columnas:\n"
-
-    for col in df.columns:
-        tipo = df[col].dtype
-        resumen += f"🔹 {col} ({tipo})"
-
-        # Añadir valores únicos si hay pocos
-        if df[col].nunique() <= 5:
-            resumen += f" | Únicos: {df[col].dropna().unique().tolist()}"
-        # Añadir estadísticas si es numérica
-        elif pd.api.types.is_numeric_dtype(df[col]):
-            resumen += (f" | Media: {df[col].mean():.2f}, "
-                        f"Máx: {df[col].max()}, "
-                        f"Mín: {df[col].min()}")
-        resumen += "\n"
-
-    # Mostrar algunas filas al azar como ejemplo
-    resumen += "\n📌 Ejemplo de registros:\n"
-    ejemplo = df.sample(min(len(df), 5), random_state=42)
-    resumen += ejemplo.to_string(index=False)
-
-    return resumen
-
-
-# Manejador de texto (preguntas)
+# 🧠 Manejador de preguntas
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_csvs:
@@ -86,30 +75,50 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     df = user_csvs[user_id]
-    # csv_preview = df.head(10).to_csv(index=False)
-    csv_preview = resumir_csv(df)
-    print(csv_preview)
-
-
+    columnas = resumir_columnas(df)
+    pregunta = update.message.text.strip()
 
     prompt = f"""
-Basandote en este archivo CSV:
+Tengo un DataFrame llamado `df`. Su estructura es la siguiente:
+{columnas}
 
-{csv_preview}
+Responde solo con una línea de código `pandas` que conteste esta pregunta:
 
-Responde a las preguntas del usuario tomando en cuenta que no tiene conocimientos técnicos en programación, si no 
-que solo quiere saber los datos concretos del csv en question:
+\"{pregunta}\"
 
-{update.message.text}
+Por ejemplo:
+df[df["edad"] > 30]
+
+No des explicaciones. Solo el código..
 """
 
     try:
-        answer = ask_groq_llama4(prompt)
-        await update.message.reply_text(answer)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error al consultar Groq: {e}")
+        codigo = traducir_a_pandas(prompt)
+        codigo = limpiar_codigo(codigo)
 
-# Iniciar el bot
+        print(codigo)
+        # Validación básica
+        if "df" not in codigo or ";" in codigo:
+            raise ValueError("❌ Código inseguro o inválido generado.")
+
+        # Ejecutar el código con el contexto seguro
+        resultado = eval(codigo, {"df": df, "pd": pd})
+
+        # Formatear la respuesta
+        if isinstance(resultado, pd.DataFrame):
+            if resultado.empty:
+                mensaje = "📭 No se encontraron resultados."
+            else:
+                mensaje = resultado.head(10).to_string(index=False)
+        else:
+            mensaje = f"🧠 Resultado: {str(resultado)}"
+
+        await update.message.reply_text(mensaje)
+
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Ocurrió un error al procesar tu solicitud:\n{e}")
+
+# ▶️ Iniciar el bot
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
