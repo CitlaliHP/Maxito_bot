@@ -1,5 +1,6 @@
 import os
 import io
+import logging
 import pandas as pd
 import matplotlib.pyplot as plt
 from telegram import Update, InputFile
@@ -8,6 +9,10 @@ from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 🔐 Claves
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -19,19 +24,29 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # Memoria por usuario
 user_csvs = {}
 
+# Limite de filas permitidas
+MAX_FILAS = 100_000
+
 # 🧠 Preguntar a Groq para obtener código pandas
+
 def traducir_a_pandas(prompt: str) -> str:
-    response = groq_client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        max_completion_tokens=256,
-        top_p=1,
-        stream=False
-    )
-    return response.choices[0].message.content.strip()
+    try:
+        response = groq_client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_completion_tokens=256,
+            top_p=1,
+            stream=False
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logging.exception("Error al comunicarse con Groq")
+        raise RuntimeError("❌ Hubo un problema al conectarse con la IA. Intenta de nuevo.") from e
+
 
 # 📊 Resumen de estructura para dar contexto a la IA
+
 def resumir_columnas(df: pd.DataFrame) -> str:
     resumen = "Estructura del DataFrame:\n"
     for col in df.columns:
@@ -40,6 +55,7 @@ def resumir_columnas(df: pd.DataFrame) -> str:
     return resumen
 
 # 🧹 Limpiar código
+
 def limpiar_codigo(codigo: str) -> str:
     codigo = codigo.strip("`").strip()
     if "```python" in codigo:
@@ -48,6 +64,7 @@ def limpiar_codigo(codigo: str) -> str:
     return lineas[0] if lineas else ""
 
 # 🎯 Detectar si es una gráfica
+
 def quiere_grafica(pregunta: str) -> bool:
     keywords = ["gráfico", "grafica", "gráfica", "histograma", "barras", "dispersión", "pie", "plot"]
     return any(k in pregunta.lower() for k in keywords)
@@ -66,13 +83,22 @@ async def handle_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_path = f"/tmp/{file.file_name}"
     file_obj = await file.get_file()
     await file_obj.download_to_drive(file_path)
-
+    
     try:
         df = pd.read_csv(file_path)
+        if len(df) > MAX_FILAS:
+            await update.message.reply_text(f"⚠️ El archivo es demasiado grande. Máximo permitido: {MAX_FILAS} filas.")
+            return
         user_csvs[update.effective_user.id] = df
         await update.message.reply_text("✅ CSV recibido. Ahora hazme una pregunta sobre los datos.")
+    except pd.errors.EmptyDataError:
+        await update.message.reply_text("⚠️ El archivo CSV está vacío.")
+    except pd.errors.ParserError:
+        await update.message.reply_text("⚠️ El archivo no tiene un formato CSV válido.")
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Error al leer el CSV: {e}")
+        logging.exception("Error leyendo el CSV")
+        await update.message.reply_text(f"⚠️ Error inesperado al leer el CSV: {e}")
+   
 
 # 🧠 Manejador de preguntas
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -86,81 +112,77 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pregunta = update.message.text.strip()
     es_grafica = quiere_grafica(pregunta)
 
-    # Prompt ajustado según el tipo
     if es_grafica:
         prompt = f"""
-            Tengo un DataFrame llamado `df`. Su estructura es la siguiente:
-            {columnas}
+        Tengo un DataFrame llamado `df`. Su estructura es la siguiente:
+        {columnas}
 
-            Genera una sola línea de código Python que use pandas o matplotlib para crear un gráfico, siguiendo exactamente la instrucción del usuario:
+        Genera una sola línea de código Python que use pandas o matplotlib para crear un gráfico, siguiendo exactamente la instrucción del usuario:
 
-            \"{pregunta}\"
+        "{pregunta}"
 
-            ⚠️ Instrucciones importantes:
-            - Usa solo columnas relevantes a la pregunta.
-            - Si el usuario dice "gráfica de barras", asegúrate de que el código use `kind='bar'`.
-            - Si dice "histograma", usa `.hist()` o `kind='hist'`.
-            - Si pide "gráfico de pastel", usa `kind='pie'`.
-            - El resultado debe ser una sola línea de código sin `print`, sin texto, sin markdown.
-            - El gráfico debe mostrarse directamente al ejecutarse, pero no lo guardes ni lo muestres explícitamente.
-            - Usa `df` como nombre del DataFrame.
+        ⚠️ Instrucciones importantes:
+        - Usa solo columnas relevantes a la pregunta.
+        - Usa `kind='bar'`, `hist()`, `kind='pie'` según el tipo de gráfico.
+        - No uses `print()`, ni texto adicional, ni markdown.
+        - Usa `df` como nombre del DataFrame.
 
-            Ejemplo de salida válida:
-            df["edad"].value_counts().plot(kind="bar")
-
-            Solo responde con la línea de código. Nada más.
-            """
-
+        Solo responde con la línea de código. Nada más.
+        """
     else:
         prompt = f"""
-            Tengo un DataFrame llamado `df`. Su estructura es la siguiente:
-            {columnas}
+        Tengo un DataFrame llamado `df`. Su estructura es la siguiente:
+        {columnas}
 
-            Responde solo con una línea de código `pandas` que conteste esta pregunta:
+        Responde solo con una línea de código `pandas` que conteste esta pregunta:
 
-            \"{pregunta}\"
+        "{pregunta}"
 
-            Por ejemplo:
-            df[df["edad"] > 30]
+        Por ejemplo:
+        df[df["edad"] > 30]
 
-            No des explicaciones. 
-            Devuelve una sola línea de código Python que retorne un resultado directamente.
-            No uses `print()`. No incluyas ningún texto. Solo la expresión que retorne el resultado.
-            """
+        No des explicaciones. Solo la expresión que retorne el resultado.
+        - No uses `print()`, ni texto adicional, ni markdown.
+        - Usa `df` como nombre del DataFrame.
+        """
 
     try:
         codigo = traducir_a_pandas(prompt)
         codigo = limpiar_codigo(codigo)
 
-        print("Código generado:", codigo)
+        logger.info(f"Código generado: {codigo}")
 
-        # Validación básica
         if "df" not in codigo or ";" in codigo:
             raise ValueError("❌ Código inseguro o inválido generado.")
 
-        # Gráfico
+        contexto_seguro = {"df": df, "pd": pd, "plt": plt}
+
         if es_grafica:
-            plt.figure()
-            eval(codigo, {"df": df, "pd": pd, "plt": plt})
+            try:
+                eval(codigo, contexto_seguro)
+            except Exception as eval_error:
+                raise RuntimeError(f"⚠️ No se pudo generar el gráfico: {eval_error}")
             buffer = io.BytesIO()
             plt.savefig(buffer, format="png")
             buffer.seek(0)
             plt.close()
             await update.message.reply_photo(photo=InputFile(buffer, filename="grafica.png"))
         else:
-            # Resultado en texto o tabla
-            resultado = eval(codigo, {"df": df, "pd": pd})
+            try:
+                resultado = eval(codigo, contexto_seguro)
+            except Exception as eval_error:
+                raise RuntimeError(f"⚠️ No se pudo ejecutar el código generado: {eval_error}")
+
             if isinstance(resultado, pd.DataFrame):
-                if resultado.empty:
-                    mensaje = "📭 No se encontraron resultados."
-                else:
-                    mensaje = resultado.head(10).to_string(index=False)
+                mensaje = "📭 No se encontraron resultados." if resultado.empty else resultado.head(10).to_string(index=False)
             else:
                 mensaje = f"🧠 {str(resultado)}"
+
             await update.message.reply_text(mensaje)
 
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Ocurrió un error al procesar tu solicitud:\n{e}")
+        logger.error("Error durante el manejo de la pregunta", exc_info=True)
+        await update.message.reply_text(f"⚠️ Ocurrió un error al procesar tu solicitud")
 
 # ▶️ Iniciar el bot
 def main():
