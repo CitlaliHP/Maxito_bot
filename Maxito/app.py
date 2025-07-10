@@ -24,6 +24,7 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 # Memoria por usuario
 user_csvs = {}
 
+
 # Limite de filas permitidas
 MAX_FILAS = 100_000
 
@@ -89,6 +90,11 @@ async def handle_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(df) > MAX_FILAS:
             await update.message.reply_text(f"⚠️ El archivo es demasiado grande. Máximo permitido: {MAX_FILAS} filas.")
             return
+        """
+        user_csvs[update.effective_user.id] = {
+            'df': df,
+            'timestamp': time.time()
+        }"""
         user_csvs[update.effective_user.id] = df
         await update.message.reply_text("✅ CSV recibido. Ahora hazme una pregunta sobre los datos.")
     except pd.errors.EmptyDataError:
@@ -110,6 +116,10 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     df = user_csvs[user_id]
     columnas = resumir_columnas(df)
     pregunta = update.message.text.strip()
+
+    if len(pregunta) > 400:
+        await update.message.reply_text("❌ La pregunta es demasiado larga. Máximo 400 caracteres.")
+        return
     es_grafica = quiere_grafica(pregunta)
 
     if es_grafica:
