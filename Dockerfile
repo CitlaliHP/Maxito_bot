@@ -5,6 +5,9 @@ WORKDIR /app
 # Copia el código y el requirements.txt
 COPY Maxito/ .
 
+# Copia el archivo .env al contenedor (asegúrate que esté en la raíz del proyecto)
+COPY .env .env
+
 # Instala las dependencias
 RUN pip install --no-cache-dir -r requirements.txt
 

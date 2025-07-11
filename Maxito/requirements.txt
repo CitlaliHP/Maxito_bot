@@ -5,3 +5,4 @@ pandas==2.2.3
 pandocfilters==1.5.1
 groq==0.28.0
 python-telegram-bot==22.1
+python-dotenv==1.1.0
