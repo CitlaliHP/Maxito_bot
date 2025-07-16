@@ -5,7 +5,7 @@ WORKDIR /app
 # Copia el código y el requirements.txt
 COPY Maxito/ .
 
-# Copia el archivo .env al contenedor (asegúrate que esté en la raíz del proyecto)
+# Copia el archivo .env al contenedor 
 COPY .env .env
 
 # Instala las dependencias
